@@ -129,9 +129,9 @@ int main(void)
   uint8_t tx[3] = {0x03, 0x0E, 0xFF};  // READ, CANSTAT address, dummy
   uint8_t rx[3];
 
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_RESET);
   HAL_SPI_TransmitReceive(&hspi3, tx, rx, 3, 100);
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_SET);
 
   /* USER CODE END 2 */
 
@@ -398,7 +398,7 @@ static void MX_SPI3_Init(void)
   hspi3.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi3.Init.NSS = SPI_NSS_SOFT;
-  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
