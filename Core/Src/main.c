@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "mcp2515.h"
+#include "can_schema.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -74,6 +75,57 @@ static void MX_SPI3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+uint8_t get_slip_context(float gyro_z_dps)
+{
+    const float YAW_RATE_THRESHOLD_DPS = 30.0f;  // tune based on expected cornering rates
+
+    if (fabsf(gyro_z_dps) > YAW_RATE_THRESHOLD_DPS)
+    {
+        return CAN_SLIP_CONTEXT_UNRELIABLE;
+    }
+    else
+    {
+        return CAN_SLIP_CONTEXT_TRUSTWORTHY;
+    }
+}
+
+CAN_Frame pack_safety_frame(uint8_t fault_active, uint8_t power_cut, uint8_t clearing, GPIO_PinState brake)
+{
+    CAN_Frame frame = { .id = CAN_ID_SAFETY, .dlc = 2 };
+    frame.data[0] = 0;
+    if (fault_active) frame.data[0] |= CAN_SAFETY_BIT_APPS_FAULT;
+    if (power_cut)     frame.data[0] |= CAN_SAFETY_BIT_POWER_CUT;
+    if (clearing)      frame.data[0] |= CAN_SAFETY_BIT_CLEARING;
+    frame.data[1] = (brake == GPIO_PIN_RESET) ? 1 : 0;  // active-low: RESET means pressed
+    return frame;
+}
+
+CAN_Frame pack_driver_input_frame(float apps1_pct, float apps2_pct, GPIO_PinState brake)
+{
+    CAN_Frame frame = { .id = CAN_ID_DRIVER_INPUT, .dlc = 3 };
+    frame.data[0] = (uint8_t)apps1_pct;
+    frame.data[1] = (uint8_t)apps2_pct;
+    frame.data[2] = (brake == GPIO_PIN_RESET) ? 1 : 0;
+    return frame;
+}
+
+CAN_Frame pack_motion_frame(float wheel_speed, float gyro_dps, uint8_t slip_flag)
+{
+    CAN_Frame frame = { .id = CAN_ID_MOTION, .dlc = 5 };
+
+    uint16_t speed_fixed = (uint16_t)wheel_speed;
+    frame.data[0] = (speed_fixed >> 8) & 0xFF;
+    frame.data[1] = speed_fixed & 0xFF;
+
+    int16_t gyro_fixed = (int16_t)(gyro_dps * 100.0f);
+    frame.data[2] = (gyro_fixed >> 8) & 0xFF;
+    frame.data[3] = gyro_fixed & 0xFF;
+
+    frame.data[4] = slip_flag;
+
+    return frame;
+}
 
 /* USER CODE END 0 */
 
@@ -154,8 +206,9 @@ int main(void)
   uint32_t current_time;
   uint32_t delta_count;
   uint32_t delta_time;
-
-
+  uint32_t last_safety_send = 0;
+  uint32_t last_driver_send = 0;
+  uint32_t last_motion_send = 0;
 
   while (1)
   {
@@ -228,6 +281,35 @@ int main(void)
 
         prev_pulse_count = pulse_counter;
         prev_time = current_time;
+    }
+
+    uint8_t slip_context = get_slip_context(gyro_z_dps);
+
+    // Safety frame: event-driven (fault state changed) OR periodic heartbeat
+    static uint8_t prev_fault_state = 0;
+    uint8_t current_fault_state = fault_was_active | (power_cut_active << 1) | (clearing_in_progress << 2);
+    uint8_t safety_state_changed = (current_fault_state != prev_fault_state);
+
+    if (safety_state_changed || (current_time - last_safety_send >= CAN_INTERVAL_SAFETY_MS))
+    {
+        CAN_Frame safety_frame = pack_safety_frame(fault_was_active, power_cut_active, clearing_in_progress, brake_state);
+        MCP2515_SendFrame(&hspi3, &can1, &safety_frame);
+        last_safety_send = current_time;
+        prev_fault_state = current_fault_state;
+    }
+
+    if (current_time - last_driver_send >= CAN_INTERVAL_DRIVER_INPUT_MS)
+    {
+        CAN_Frame driver_frame = pack_driver_input_frame(apps1_pct, apps2_pct, brake_state);
+        MCP2515_SendFrame(&hspi3, &can1, &driver_frame);
+        last_driver_send = current_time;
+    }
+
+    if (current_time - last_motion_send >= CAN_INTERVAL_MOTION_MS)
+    {
+        CAN_Frame motion_frame = pack_motion_frame(wheel_speed_pps, gyro_z_dps, slip_context);
+        MCP2515_SendFrame(&hspi3, &can1, &motion_frame);
+        last_motion_send = current_time;
     }
   /* USER CODE END 3 */
   }
