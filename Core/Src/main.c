@@ -73,6 +73,15 @@ static void MX_SPI3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void mcp2515_write(GPIO_TypeDef* csPort, uint16_t csPin, uint8_t addr, uint8_t data)
+{
+    uint8_t tx[3] = {0x02, addr, data};
+    uint8_t dummy_rx[3];  // discarded, but keeps RX FIFO serviced
+
+    HAL_GPIO_WritePin(csPort, csPin, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(&hspi3, tx, dummy_rx, 3, 100);
+    HAL_GPIO_WritePin(csPort, csPin, GPIO_PIN_SET);
+}
 
 /* USER CODE END 0 */
 
@@ -115,23 +124,66 @@ int main(void)
   uint8_t wake_cmd = 0x00;
   HAL_I2C_Mem_Write(&hi2c1, 0x68 << 1, 0x6B, I2C_MEMADD_SIZE_8BIT, &wake_cmd, 1, 100);
 
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);  // CS low - select chip
   uint8_t reset_cmd = 0xC0;
-  HAL_SPI_Transmit(&hspi3, &reset_cmd, 1, 100);
+  uint8_t reset_dummy_rx;
+
+  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);  // CS low - select chip
+  HAL_SPI_TransmitReceive(&hspi3, &reset_cmd, &reset_dummy_rx, 1, 100);
   HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);    // CS high - deselect
-  HAL_Delay(10);  // MCP2515 needs a short delay after reset before further commands
+  HAL_Delay(10);
 
   HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_RESET);  // CS low - select chip 2
-  HAL_SPI_Transmit(&hspi3, &reset_cmd, 1, 100);       // reuse reset_cmd, same value
+  HAL_SPI_TransmitReceive(&hspi3, &reset_cmd, &reset_dummy_rx, 1, 100);
   HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_SET);    // CS high - deselect
   HAL_Delay(10);
 
-  uint8_t tx[3] = {0x03, 0x0E, 0xFF};  // READ, CANSTAT address, dummy
-  uint8_t rx[3];
+  // ---- CANSTAT isolation test: only this runs from here down ----
+  uint8_t tx_stat[3] = {0x03, 0x0E, 0xFF};
+  uint8_t rx_stat[3] = {0};
 
-  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_RESET);
-  HAL_SPI_TransmitReceive(&hspi3, tx, rx, 3, 100);
-  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+  HAL_StatusTypeDef stat_status = HAL_SPI_TransmitReceive(&hspi3, tx_stat, rx_stat, 3, 100);
+  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+  volatile uint8_t canstat = rx_stat[2];
+  volatile HAL_StatusTypeDef canstat_hal_status = stat_status;
+
+  // Burst-write CNF3, CNF2, CNF1 with verify-and-retry (handles marginal breadboard signal)
+  uint8_t cnf_write_success = 0;
+  uint8_t cnf_retry_count = 0;
+  const uint8_t MAX_CNF_RETRIES = 5;
+
+  while (cnf_write_success == 0 && cnf_retry_count < MAX_CNF_RETRIES)
+  {
+      // Write CNF3, CNF2, CNF1 in one burst (address auto-increments)
+      uint8_t tx_burst[5] = {0x02, 0x28, 0x05, 0xAA, 0x01};
+      uint8_t rx_burst_dummy[5];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_burst, rx_burst_dummy, 5, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      // Read back to verify
+      uint8_t tx_readback[5] = {0x03, 0x28, 0xFF, 0xFF, 0xFF};
+      uint8_t rx_readback[5];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_readback, rx_readback, 5, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      // Check all three registers landed correctly
+      if (rx_readback[2] == 0x05 && rx_readback[3] == 0xAA && rx_readback[4] == 0x01)
+      {
+          cnf_write_success = 1;
+      }
+      else
+      {
+          cnf_retry_count++;
+      }
+  }
+
+  volatile uint8_t cnf_config_ok = cnf_write_success;
+  volatile uint8_t cnf_retries_used = cnf_retry_count;
 
   /* USER CODE END 2 */
 
