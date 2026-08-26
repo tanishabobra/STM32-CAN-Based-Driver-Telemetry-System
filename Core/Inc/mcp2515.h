@@ -28,6 +28,11 @@
 #define MCP2515_REG_TXB0SIDH   0x31
 #define MCP2515_REG_RXB0SIDH   0x61
 
+#define MCP2515_REG_CANINTF    0x2C
+
+// CANINTF bit for RX buffer 0 full flag
+#define MCP2515_CANINTF_RX0IF   0x01
+
 // CANCTRL mode request bits (REQOP[2:0], bits 7:5)
 #define MCP2515_MODE_NORMAL    0x00
 #define MCP2515_MODE_SLEEP     0x20
@@ -54,6 +59,8 @@ uint8_t MCP2515_SetBitTiming(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev, uint8
 uint8_t MCP2515_SetMode(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev, uint8_t mode);
 uint8_t MCP2515_SendFrame(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev, CAN_Frame* frame);
 uint8_t MCP2515_ReadFrame(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev, CAN_Frame* frame);
+
+void MCP2515_ClearRXFlag(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev);
 
 #endif
 

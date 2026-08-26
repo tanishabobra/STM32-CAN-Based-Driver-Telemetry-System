@@ -131,5 +131,19 @@ uint8_t MCP2515_ReadFrame(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev, CAN_Fram
         frame->data[i] = rx[7 + i];
     }
 
+    MCP2515_ClearRXFlag(hspi, dev);
+
     return 1;
+}
+
+void MCP2515_ClearRXFlag(SPI_HandleTypeDef* hspi, MCP2515_Handle* dev)
+{
+    // Clear RX0IF bit in CANINTF using bit-modify command (opcode 0x05):
+    // frees the buffer to receive the next frame
+    uint8_t tx[4] = {0x05, MCP2515_REG_CANINTF, MCP2515_CANINTF_RX0IF, 0x00};
+    uint8_t dummy_rx[4];
+
+    HAL_GPIO_WritePin(dev->csPort, dev->csPin, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(hspi, tx, dummy_rx, 4, 100);
+    HAL_GPIO_WritePin(dev->csPort, dev->csPin, GPIO_PIN_SET);
 }
