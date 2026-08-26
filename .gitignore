@@ -1,0 +1,10 @@
+Debug/
+Release/
+*.o
+*.d
+*.su
+*.cyclo
+*.list
+.settings/
+.metadata/
+.DS_Store
