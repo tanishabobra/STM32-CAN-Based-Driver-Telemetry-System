@@ -18,12 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "mcp2515.h"
-#include "can_schema.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <stdio.h>
+#include "main.h"
+#include "mcp2515.h"
+#include "can_schema.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,6 +52,8 @@ I2C_HandleTypeDef hi2c1;
 
 SPI_HandleTypeDef hspi3;
 
+UART_HandleTypeDef huart2;
+
 /* USER CODE BEGIN PV */
 uint32_t pulse_counter;
 uint32_t fault_start_time;
@@ -69,6 +73,7 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI3_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -76,9 +81,22 @@ static void MX_SPI3_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/**
+ * @brief Flags whether the current wheel-speed reading should be trusted.
+ *
+ * Wheel speed (linear) and gyro-Z (yaw rate) measure different physical
+ * quantities, so this is not a complementary filter fusing two measurements
+ * of the same signal. It's a plausibility check: high yaw rate indicates
+ * cornering, during which a single wheel's speed diverges from vehicle
+ * speed due to slip, making it a less trustworthy proxy for overall speed.
+ *
+ * Threshold is a placeholder pending real cornering data from the vehicle;
+ * not empirically tuned here since that requires field data unavailable
+ * on the bench.
+ */
 uint8_t get_slip_context(float gyro_z_dps)
 {
-    const float YAW_RATE_THRESHOLD_DPS = 30.0f;  // tune based on expected cornering rates
+    const float YAW_RATE_THRESHOLD_DPS = 30.0f;
 
     if (fabsf(gyro_z_dps) > YAW_RATE_THRESHOLD_DPS)
     {
@@ -106,7 +124,7 @@ CAN_Frame pack_driver_input_frame(float apps1_pct, float apps2_pct, GPIO_PinStat
     CAN_Frame frame = { .id = CAN_ID_DRIVER_INPUT, .dlc = 3 };
     frame.data[0] = (uint8_t)apps1_pct;
     frame.data[1] = (uint8_t)apps2_pct;
-    frame.data[2] = (brake == GPIO_PIN_RESET) ? 1 : 0;
+    frame.data[2] = (brake == GPIO_PIN_RESET) ? 1 : 0;  // active-low: RESET means pressed
     return frame;
 }
 
@@ -161,7 +179,13 @@ int main(void)
   MX_ADC1_Init();
   MX_I2C1_Init();
   MX_SPI3_Init();
+  MX_USART2_UART_Init();
+
   /* USER CODE BEGIN 2 */
+
+  char boot_msg[] = "Board booted, UART alive\r\n";
+  HAL_UART_Transmit(&huart2, (uint8_t*)boot_msg, sizeof(boot_msg) - 1, 100);
+
   uint8_t who_am_i_result;
   HAL_I2C_Mem_Read(&hi2c1, 0x68 << 1, 0x75, I2C_MEMADD_SIZE_8BIT, &who_am_i_result, 1, 100);
 
@@ -170,20 +194,40 @@ int main(void)
 
   MCP2515_Handle can1 = { .csPort = GPIOC, .csPin = cs1_Pin };
 
-  volatile uint8_t can1_reset_ok = MCP2515_Reset(&hspi3, &can1);
-  volatile uint8_t can1_bittiming_ok = MCP2515_SetBitTiming(&hspi3, &can1, 0x01, 0xAA, 0x05);
-  volatile uint8_t can1_loopback_ok = MCP2515_SetMode(&hspi3, &can1, MCP2515_MODE_LOOPBACK);
+  // Startup self-test: bring up the CAN controller and verify TX/RX via
+  // internal loopback before entering the main loop. Retries a bounded
+  // number of times to tolerate transient signal issues on the breadboard
+  // prototyping platform; halts only if all attempts fail.
+  uint8_t can_ready = 0;
+  for (uint8_t boot_attempt = 0; boot_attempt < 3 && !can_ready; boot_attempt++)
+  {
+      can_ready = 1;
+      can_ready &= MCP2515_Reset(&hspi3, &can1);
+      can_ready &= MCP2515_SetBitTiming(&hspi3, &can1, 0x01, 0xAA, 0x05);  // 125kbps @ 8MHz osc
+      can_ready &= MCP2515_SetMode(&hspi3, &can1, MCP2515_MODE_LOOPBACK);
 
-  CAN_Frame tx_frame = { .id = 0x123, .dlc = 2, .data = {0xAB, 0xCD} };
-  MCP2515_SendFrame(&hspi3, &can1, &tx_frame);
-  HAL_Delay(5);
+      if (can_ready)
+      {
+          CAN_Frame tx_frame = { .id = 0x123, .dlc = 2, .data = {0xAB, 0xCD} };
+          MCP2515_SendFrame(&hspi3, &can1, &tx_frame);
+          HAL_Delay(5);
 
-  CAN_Frame rx_frame;
-  MCP2515_ReadFrame(&hspi3, &can1, &rx_frame);
+          CAN_Frame rx_frame;
+          MCP2515_ReadFrame(&hspi3, &can1, &rx_frame);
 
-  volatile uint8_t can1_loopback_test_ok =
-      (rx_frame.id == tx_frame.id && rx_frame.dlc == tx_frame.dlc &&
-       rx_frame.data[0] == tx_frame.data[0] && rx_frame.data[1] == tx_frame.data[1]) ? 1 : 0;
+          can_ready = (rx_frame.id == tx_frame.id && rx_frame.dlc == tx_frame.dlc &&
+                       rx_frame.data[0] == tx_frame.data[0] && rx_frame.data[1] == tx_frame.data[1]);
+      }
+  }
+
+  char diag_msg[64];
+  int diag_len = snprintf(diag_msg, sizeof(diag_msg), "can_ready=%d\r\n", can_ready);
+  HAL_UART_Transmit(&huart2, (uint8_t*)diag_msg, diag_len, 100);
+
+  if (!can_ready)
+  {
+      Error_Handler();  // CAN self-test failed after retries; do not proceed with an unverified link
+  }
 
   /* USER CODE END 2 */
 
@@ -216,6 +260,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    char loop_msg[] = "Loop iteration start\r\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)loop_msg, sizeof(loop_msg) - 1, 100);
+
     HAL_ADC_Start(&hadc1);
 
     HAL_ADC_PollForConversion(&hadc1, 1);
@@ -311,6 +358,13 @@ int main(void)
         MCP2515_SendFrame(&hspi3, &can1, &motion_frame);
         last_motion_send = current_time;
     }
+
+    char uart_buf[128];
+    int len = snprintf(uart_buf, sizeof(uart_buf),
+        "APPS1:%.1f APPS2:%.1f BRAKE:%d FAULT:%d PCUT:%d WSPD:%.1f GYRO:%.2f SLIP:%d\r\n",
+        apps1_pct, apps2_pct, (brake_state == GPIO_PIN_RESET) ? 1 : 0,
+        fault_was_active, power_cut_active, wheel_speed_pps, gyro_z_dps, slip_context);
+    HAL_UART_Transmit(&huart2, (uint8_t*)uart_buf, len, 100);
   /* USER CODE END 3 */
   }
 }
@@ -496,6 +550,39 @@ static void MX_SPI3_Init(void)
 }
 
 /**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -534,14 +621,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : USART_TX_Pin USART_RX_Pin */
-  GPIO_InitStruct.Pin = USART_TX_Pin|USART_RX_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
