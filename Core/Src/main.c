@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "mcp2515.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -73,15 +74,6 @@ static void MX_SPI3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void mcp2515_write(GPIO_TypeDef* csPort, uint16_t csPin, uint8_t addr, uint8_t data)
-{
-    uint8_t tx[3] = {0x02, addr, data};
-    uint8_t dummy_rx[3];  // discarded, but keeps RX FIFO serviced
-
-    HAL_GPIO_WritePin(csPort, csPin, GPIO_PIN_RESET);
-    HAL_SPI_TransmitReceive(&hspi3, tx, dummy_rx, 3, 100);
-    HAL_GPIO_WritePin(csPort, csPin, GPIO_PIN_SET);
-}
 
 /* USER CODE END 0 */
 
@@ -124,160 +116,22 @@ int main(void)
   uint8_t wake_cmd = 0x00;
   HAL_I2C_Mem_Write(&hi2c1, 0x68 << 1, 0x6B, I2C_MEMADD_SIZE_8BIT, &wake_cmd, 1, 100);
 
-  uint8_t reset_cmd = 0xC0;
-  uint8_t reset_dummy_rx;
+  MCP2515_Handle can1 = { .csPort = GPIOC, .csPin = cs1_Pin };
 
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);  // CS low - select chip
-  HAL_SPI_TransmitReceive(&hspi3, &reset_cmd, &reset_dummy_rx, 1, 100);
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);    // CS high - deselect
-  HAL_Delay(10);
+  volatile uint8_t can1_reset_ok = MCP2515_Reset(&hspi3, &can1);
+  volatile uint8_t can1_bittiming_ok = MCP2515_SetBitTiming(&hspi3, &can1, 0x01, 0xAA, 0x05);
+  volatile uint8_t can1_loopback_ok = MCP2515_SetMode(&hspi3, &can1, MCP2515_MODE_LOOPBACK);
 
-  // ---- CANSTAT isolation test: only this runs from here down ----
-  uint8_t tx_stat[3] = {0x03, 0x0E, 0xFF};
-  uint8_t rx_stat[3] = {0};
+  CAN_Frame tx_frame = { .id = 0x123, .dlc = 2, .data = {0xAB, 0xCD} };
+  MCP2515_SendFrame(&hspi3, &can1, &tx_frame);
+  HAL_Delay(5);
 
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-  HAL_StatusTypeDef stat_status = HAL_SPI_TransmitReceive(&hspi3, tx_stat, rx_stat, 3, 100);
-  HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+  CAN_Frame rx_frame;
+  MCP2515_ReadFrame(&hspi3, &can1, &rx_frame);
 
-  volatile uint8_t canstat = rx_stat[2];
-  volatile HAL_StatusTypeDef canstat_hal_status = stat_status;
-
-  // Burst-write CNF3, CNF2, CNF1 with verify-and-retry (handles marginal breadboard signal)
-  uint8_t cnf_write_success = 0;
-  uint8_t cnf_retry_count = 0;
-  const uint8_t MAX_CNF_RETRIES = 5;
-
-  while (cnf_write_success == 0 && cnf_retry_count < MAX_CNF_RETRIES)
-  {
-      // Write CNF3, CNF2, CNF1 in one burst (address auto-increments)
-      uint8_t tx_burst[5] = {0x02, 0x28, 0x05, 0xAA, 0x01};
-      uint8_t rx_burst_dummy[5];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_burst, rx_burst_dummy, 5, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      // Read back to verify
-      uint8_t tx_readback[5] = {0x03, 0x28, 0xFF, 0xFF, 0xFF};
-      uint8_t rx_readback[5];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_readback, rx_readback, 5, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      // Check all three registers landed correctly
-      if (rx_readback[2] == 0x05 && rx_readback[3] == 0xAA && rx_readback[4] == 0x01)
-      {
-          cnf_write_success = 1;
-      }
-      else
-      {
-          cnf_retry_count++;
-      }
-  }
-
-  volatile uint8_t cnf_config_ok = cnf_write_success;
-  volatile uint8_t cnf_retries_used = cnf_retry_count;
-
-  // Switch CS1 to Loopback mode, with verify-and-retry
-  uint8_t mode_switch_success = 0;
-  uint8_t mode_retry_count = 0;
-
-  while (mode_switch_success == 0 && mode_retry_count < MAX_CNF_RETRIES)
-  {
-      // Write CANCTRL: REQOP = 010 (Loopback)
-      uint8_t tx_mode[3] = {0x02, 0x0F, 0x40};
-      uint8_t rx_mode_dummy[3];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_mode, rx_mode_dummy, 3, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      HAL_Delay(1);  // brief settle time before checking status
-
-      // Read back CANSTAT to confirm actual mode
-      uint8_t tx_mode_check[3] = {0x03, 0x0E, 0xFF};
-      uint8_t rx_mode_check[3];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_mode_check, rx_mode_check, 3, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      if ((rx_mode_check[2] & 0xE0) == 0x40)  // check OPMOD bits only
-      {
-          mode_switch_success = 1;
-      }
-      else
-      {
-          mode_retry_count++;
-      }
-  }
-
-  volatile uint8_t loopback_mode_ok = mode_switch_success;
-  volatile uint8_t loopback_retries_used = mode_retry_count;
-
-  // ---- Send a test CAN frame via TX buffer, verify it loops back to RX buffer ----
-  uint8_t can_tx_rx_success = 0;
-  uint8_t can_tx_rx_retry_count = 0;
-
-  while (can_tx_rx_success == 0 && can_tx_rx_retry_count < MAX_CNF_RETRIES)
-  {
-      // Load TX buffer 0: standard ID 0x123, DLC=2, data = {0xAB, 0xCD}
-      // TXB0SIDH = ID[10:3], TXB0SIDL = ID[2:0] << 5
-      uint8_t std_id = 0x123;
-      uint8_t sidh = (std_id >> 3) & 0xFF;
-      uint8_t sidl = (std_id & 0x07) << 5;
-
-      // Burst write starting at TXB0SIDH (0x31): SIDH, SIDL, EID8, EID0, DLC, D0, D1
-      uint8_t tx_load[9] = {
-          0x02, 0x31,        // WRITE, start address TXB0SIDH
-          sidh, sidl,         // SIDH, SIDL
-          0x00, 0x00,          // EID8, EID0 (unused, standard frame)
-          0x02,                 // DLC = 2 bytes
-          0xAB, 0xCD            // data bytes
-      };
-      uint8_t tx_load_dummy[9];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_load, tx_load_dummy, 9, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      // Send RTS (Request To Send) command for TXB0 — single byte 0x81
-      uint8_t rts_cmd = 0x81;
-      uint8_t rts_dummy;
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, &rts_cmd, &rts_dummy, 1, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      HAL_Delay(5);  // give loopback time to complete
-
-      // Read back RX buffer 0 (starting at RXB0SIDH = 0x61) to see if the frame arrived
-      uint8_t tx_rx_check[9] = {0x03, 0x61, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-      uint8_t rx_rx_check[9];
-
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
-      HAL_SPI_TransmitReceive(&hspi3, tx_rx_check, rx_rx_check, 9, 100);
-      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
-
-      // rx_rx_check[2]=SIDH, [3]=SIDL, [6]=DLC, [7]=data0, [8]=data1
-      if (rx_rx_check[2] == sidh && rx_rx_check[3] == sidl &&
-          rx_rx_check[6] == 0x02 && rx_rx_check[7] == 0xAB && rx_rx_check[8] == 0xCD)
-      {
-          can_tx_rx_success = 1;
-      }
-      else
-      {
-          can_tx_rx_retry_count++;
-      }
-  }
-
-  volatile uint8_t can_loopback_ok = can_tx_rx_success;
-  volatile uint8_t can_loopback_retries = can_tx_rx_retry_count;
-  volatile uint8_t received_sidh = 0;
-  volatile uint8_t received_data0 = 0;
-  volatile uint8_t received_data1 = 0;
+  volatile uint8_t can1_loopback_test_ok =
+      (rx_frame.id == tx_frame.id && rx_frame.dlc == tx_frame.dlc &&
+       rx_frame.data[0] == tx_frame.data[0] && rx_frame.data[1] == tx_frame.data[1]) ? 1 : 0;
 
   /* USER CODE END 2 */
 
