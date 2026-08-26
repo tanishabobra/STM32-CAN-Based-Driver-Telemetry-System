@@ -132,11 +132,6 @@ int main(void)
   HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);    // CS high - deselect
   HAL_Delay(10);
 
-  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_RESET);  // CS low - select chip 2
-  HAL_SPI_TransmitReceive(&hspi3, &reset_cmd, &reset_dummy_rx, 1, 100);
-  HAL_GPIO_WritePin(GPIOC, cs2_Pin, GPIO_PIN_SET);    // CS high - deselect
-  HAL_Delay(10);
-
   // ---- CANSTAT isolation test: only this runs from here down ----
   uint8_t tx_stat[3] = {0x03, 0x0E, 0xFF};
   uint8_t rx_stat[3] = {0};
