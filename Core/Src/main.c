@@ -185,6 +185,105 @@ int main(void)
   volatile uint8_t cnf_config_ok = cnf_write_success;
   volatile uint8_t cnf_retries_used = cnf_retry_count;
 
+  // Switch CS1 to Loopback mode, with verify-and-retry
+  uint8_t mode_switch_success = 0;
+  uint8_t mode_retry_count = 0;
+
+  while (mode_switch_success == 0 && mode_retry_count < MAX_CNF_RETRIES)
+  {
+      // Write CANCTRL: REQOP = 010 (Loopback)
+      uint8_t tx_mode[3] = {0x02, 0x0F, 0x40};
+      uint8_t rx_mode_dummy[3];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_mode, rx_mode_dummy, 3, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      HAL_Delay(1);  // brief settle time before checking status
+
+      // Read back CANSTAT to confirm actual mode
+      uint8_t tx_mode_check[3] = {0x03, 0x0E, 0xFF};
+      uint8_t rx_mode_check[3];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_mode_check, rx_mode_check, 3, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      if ((rx_mode_check[2] & 0xE0) == 0x40)  // check OPMOD bits only
+      {
+          mode_switch_success = 1;
+      }
+      else
+      {
+          mode_retry_count++;
+      }
+  }
+
+  volatile uint8_t loopback_mode_ok = mode_switch_success;
+  volatile uint8_t loopback_retries_used = mode_retry_count;
+
+  // ---- Send a test CAN frame via TX buffer, verify it loops back to RX buffer ----
+  uint8_t can_tx_rx_success = 0;
+  uint8_t can_tx_rx_retry_count = 0;
+
+  while (can_tx_rx_success == 0 && can_tx_rx_retry_count < MAX_CNF_RETRIES)
+  {
+      // Load TX buffer 0: standard ID 0x123, DLC=2, data = {0xAB, 0xCD}
+      // TXB0SIDH = ID[10:3], TXB0SIDL = ID[2:0] << 5
+      uint8_t std_id = 0x123;
+      uint8_t sidh = (std_id >> 3) & 0xFF;
+      uint8_t sidl = (std_id & 0x07) << 5;
+
+      // Burst write starting at TXB0SIDH (0x31): SIDH, SIDL, EID8, EID0, DLC, D0, D1
+      uint8_t tx_load[9] = {
+          0x02, 0x31,        // WRITE, start address TXB0SIDH
+          sidh, sidl,         // SIDH, SIDL
+          0x00, 0x00,          // EID8, EID0 (unused, standard frame)
+          0x02,                 // DLC = 2 bytes
+          0xAB, 0xCD            // data bytes
+      };
+      uint8_t tx_load_dummy[9];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_load, tx_load_dummy, 9, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      // Send RTS (Request To Send) command for TXB0 — single byte 0x81
+      uint8_t rts_cmd = 0x81;
+      uint8_t rts_dummy;
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, &rts_cmd, &rts_dummy, 1, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      HAL_Delay(5);  // give loopback time to complete
+
+      // Read back RX buffer 0 (starting at RXB0SIDH = 0x61) to see if the frame arrived
+      uint8_t tx_rx_check[9] = {0x03, 0x61, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+      uint8_t rx_rx_check[9];
+
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_RESET);
+      HAL_SPI_TransmitReceive(&hspi3, tx_rx_check, rx_rx_check, 9, 100);
+      HAL_GPIO_WritePin(GPIOC, cs1_Pin, GPIO_PIN_SET);
+
+      // rx_rx_check[2]=SIDH, [3]=SIDL, [6]=DLC, [7]=data0, [8]=data1
+      if (rx_rx_check[2] == sidh && rx_rx_check[3] == sidl &&
+          rx_rx_check[6] == 0x02 && rx_rx_check[7] == 0xAB && rx_rx_check[8] == 0xCD)
+      {
+          can_tx_rx_success = 1;
+      }
+      else
+      {
+          can_tx_rx_retry_count++;
+      }
+  }
+
+  volatile uint8_t can_loopback_ok = can_tx_rx_success;
+  volatile uint8_t can_loopback_retries = can_tx_rx_retry_count;
+  volatile uint8_t received_sidh = 0;
+  volatile uint8_t received_data0 = 0;
+  volatile uint8_t received_data1 = 0;
+
   /* USER CODE END 2 */
 
   /* Initialize leds */
