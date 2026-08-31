@@ -37,22 +37,19 @@ Each subsystem was built and evaluated against measured hardware behavior rather
 
 ## Architecture
 
-```
-STM32F446RE
- |-- ADC1        -> dual APPS potentiometers
- |-- I2C1        -> MPU-6500 (gyro-Z)
- |-- EXTI (PC1)  -> wheel-speed pulse source (push button, substituting for Hall sensor)
- |-- SPI3        -> MCP2515 CAN controller (loopback validated)
- `-- USART2      -> decoded telemetry, 115200 baud
-                        |
-                        v
-               tools/dashboard/server.py
-               (FastAPI + pyserial, auto-detects port)
-                        |
-                        v
-               tools/dashboard/index.html
-               (live gauges, indicators, wheel-speed chart)
-```
+**On the STM32F446RE:**
+
+| Peripheral | Function |
+|---|---|
+| ADC1 | Dual APPS potentiometers |
+| I2C1 | MPU-6500 gyro-Z |
+| EXTI (PC1) | Wheel-speed pulse source (push button, substituting for Hall sensor) |
+| SPI3 | MCP2515 CAN controller (loopback validated) |
+| USART2 | Decoded telemetry output, 115200 baud |
+
+**Off the board:**
+
+USART2 feeds `tools/dashboard/server.py`, a FastAPI service that auto-detects the serial port and broadcasts parsed telemetry over a WebSocket. `tools/dashboard/index.html` connects to that WebSocket and renders live gauges, indicator lights, and a wheel-speed chart in the browser.
 
 ## Running the Dashboard
 
