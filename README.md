@@ -1,4 +1,4 @@
-# CAN-Networked Driver Input & State Estimation System
+# CAN-Based Driver Telemetry System, STM32
 
 Electric vehicles depend on distributed embedded systems: independent nodes reading sensors, applying safety-critical logic in hard real time, and communicating state over a shared bus with no single point of failure. This project implements a CAN-networked driver input and state estimation node from first principles on an STM32 microcontroller, targeting realistic accelerator/brake safety and sensor-timing requirements, and evaluates each subsystem against measured hardware behavior rather than assumed correctness.
 
