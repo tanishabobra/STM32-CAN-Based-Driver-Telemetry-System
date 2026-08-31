@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Telemetry Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #262b36;
+    --text: #e6e8eb;
+    --muted: #8b93a3;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --amber: #f1c40f;
+    --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.2s;
+  }
+  .status-dot.live { background: var(--green); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .panel-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 10px;
+    align-self: flex-start;
+  }
+  .gauge-value {
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .gauge-value .unit {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 2px;
+  }
+  .indicator-light {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: #2a2f3a;
+    border: 3px solid #3a4152;
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .indicator-light.on-green {
+    background: var(--green);
+    box-shadow: 0 0 18px 2px rgba(46,204,113,0.6);
+    border-color: var(--green);
+  }
+  .indicator-light.on-red {
+    background: var(--red);
+    box-shadow: 0 0 18px 2px rgba(231,76,60,0.6);
+    border-color: var(--red);
+  }
+  .indicator-light.on-amber {
+    background: var(--amber);
+    box-shadow: 0 0 18px 2px rgba(241,196,15,0.6);
+    border-color: var(--amber);
+  }
+  .indicator-label {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .dual-indicator {
+    display: flex;
+    gap: 20px;
+  }
+  .dual-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .chart-panel {
+    grid-column: 1 / -1;
+  }
+  canvas.chart {
+    width: 100%;
+    height: 160px;
+  }
+  .apps-diff {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .apps-diff.warn { color: var(--amber); }
+</style>
+</head>
+<body>
+
+<h1>Nucleo-F446RE Telemetry</h1>
+<div class="status-row">
+  <div class="status-dot" id="status-dot"></div>
+  <span id="status-text">Connecting...</span>
+</div>
+
+<div class="grid">
+
+  <div class="panel">
+    <div class="panel-title">APPS1</div>
+    <canvas id="gauge-apps1" width="180" height="110"></canvas>
+    <div class="gauge-value"><span id="val-apps1">--</span><span class="unit">%</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">APPS2</div>
+    <canvas id="gauge-apps2" width="180" height="110"></canvas>
+    <div class="gauge-value"><span id="val-apps2">--</span><span class="unit">%</span></div>
+    <div class="apps-diff" id="apps-diff"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Wheel Speed</div>
+    <canvas id="gauge-wspd" width="180" height="110"></canvas>
+    <div class="gauge-value"><span id="val-wspd">--</span><span class="unit">pulses/s</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Brake</div>
+    <div class="indicator-light" id="light-brake"></div>
+    <div class="indicator-label" id="label-brake">RELEASED</div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Fault / Power Cut</div>
+    <div class="dual-indicator">
+      <div class="dual-item">
+        <div class="indicator-light" id="light-fault"></div>
+        <div class="indicator-label">FAULT</div>
+      </div>
+      <div class="dual-item">
+        <div class="indicator-light" id="light-pcut"></div>
+        <div class="indicator-label">PCUT</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Slip Context (GYRO)</div>
+    <div class="indicator-light" id="light-slip"></div>
+    <div class="indicator-label" id="label-slip">--</div>
+    <div class="apps-diff" id="val-gyro"></div>
+  </div>
+
+  <div class="panel chart-panel">
+    <div class="panel-title">Wheel Speed — last 30s</div>
+    <canvas id="chart-wspd" class="chart"></canvas>
+  </div>
+
+</div>
+
+<script>
+const MAX_APPS = 100;
+const MAX_WSPD = 50; // pulses/sec full-scale for the gauge; chart auto-scales
+
+function drawGauge(canvas, value, maxValue, color) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h - 10, r = Math.min(w / 2 - 10, h - 20);
+  ctx.clearRect(0, 0, w, h);
+
+  const startAngle = Math.PI;
+  const endAngle = 2 * Math.PI;
+
+  // background arc
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, startAngle, endAngle);
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = '#262b36';
+  ctx.stroke();
+
+  // value arc
+  const frac = Math.max(0, Math.min(1, value / maxValue));
+  const valAngle = startAngle + frac * (endAngle - startAngle);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, startAngle, valAngle);
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+function setGauge(id, value, maxValue, color) {
+  const canvas = document.getElementById(id);
+  drawGauge(canvas, value, maxValue, color);
+}
+
+function gaugeColorForApps(v) {
+  if (v > 85) return '#e74c3c';
+  if (v > 60) return '#f1c40f';
+  return '#4da3ff';
+}
+
+// --- Wheel speed chart (simple rolling canvas line chart, no libraries) ---
+const chartCanvas = document.getElementById('chart-wspd');
+const chartCtx = chartCanvas.getContext('2d');
+let chartData = []; // {t, v}
+const WINDOW_MS = 30000;
+
+function resizeChartCanvas() {
+  const rect = chartCanvas.getBoundingClientRect();
+  chartCanvas.width = rect.width * devicePixelRatio;
+  chartCanvas.height = rect.height * devicePixelRatio;
+}
+window.addEventListener('resize', resizeChartCanvas);
+resizeChartCanvas();
+
+function drawChart() {
+  const w = chartCanvas.width, h = chartCanvas.height;
+  chartCtx.clearRect(0, 0, w, h);
+
+  const now = Date.now();
+  chartData = chartData.filter(p => now - p.t <= WINDOW_MS);
+  if (chartData.length < 2) return;
+
+  const maxV = Math.max(10, ...chartData.map(p => p.v)) * 1.15;
+  const pad = 10 * devicePixelRatio;
+
+  // gridlines
+  chartCtx.strokeStyle = '#262b36';
+  chartCtx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const y = pad + (h - 2 * pad) * (i / 3);
+    chartCtx.beginPath();
+    chartCtx.moveTo(pad, y);
+    chartCtx.lineTo(w - pad, y);
+    chartCtx.stroke();
+  }
+
+  chartCtx.beginPath();
+  chartCtx.lineWidth = 2 * devicePixelRatio;
+  chartCtx.strokeStyle = '#4da3ff';
+  chartData.forEach((p, i) => {
+    const age = (now - p.t) / WINDOW_MS; // 0 = now (right edge), 1 = window start (left edge)
+    const x = pad + (w - 2 * pad) * (1 - age);
+    const y = h - pad - (h - 2 * pad) * (p.v / maxV);
+    if (i === 0) chartCtx.moveTo(x, y);
+    else chartCtx.lineTo(x, y);
+  });
+  chartCtx.stroke();
+}
+
+// --- websocket wiring ---
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+
+function setConnStatus(connected, label) {
+  statusDot.classList.toggle('live', connected);
+  statusText.textContent = label;
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => setConnStatus(false, 'Waiting for board...');
+  ws.onclose = () => { setConnStatus(false, 'Disconnected — retrying...'); setTimeout(connect, 1000); };
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.status === 'waiting_for_device') {
+      setConnStatus(false, 'Waiting for board (no /dev/tty.usbmodem* found)...');
+      return;
+    }
+    if (msg.status === 'connected' && !msg.data) {
+      setConnStatus(true, `Connected on ${msg.port}`);
+      return;
+    }
+    if (!msg.data) return;
+    setConnStatus(true, 'Live');
+    updateDashboard(msg.data);
+  };
+}
+
+function updateDashboard(d) {
+  document.getElementById('val-apps1').textContent = d.APPS1.toFixed(1);
+  document.getElementById('val-apps2').textContent = d.APPS2.toFixed(1);
+  document.getElementById('val-wspd').textContent = d.WSPD.toFixed(1);
+  document.getElementById('val-gyro').textContent = `GYRO: ${d.GYRO.toFixed(2)} deg/s`;
+
+  setGauge('gauge-apps1', d.APPS1, MAX_APPS, gaugeColorForApps(d.APPS1));
+  setGauge('gauge-apps2', d.APPS2, MAX_APPS, gaugeColorForApps(d.APPS2));
+  setGauge('gauge-wspd', d.WSPD, MAX_WSPD, '#4da3ff');
+
+  const diff = Math.abs(d.APPS1 - d.APPS2);
+  const diffEl = document.getElementById('apps-diff');
+  diffEl.textContent = `Δ ${diff.toFixed(1)}%`;
+  diffEl.classList.toggle('warn', diff > 10);
+
+  const brakeLight = document.getElementById('light-brake');
+  brakeLight.classList.toggle('on-red', d.BRAKE === 1);
+  document.getElementById('label-brake').textContent = d.BRAKE === 1 ? 'ENGAGED' : 'RELEASED';
+
+  document.getElementById('light-fault').classList.toggle('on-red', d.FAULT === 1);
+  document.getElementById('light-pcut').classList.toggle('on-amber', d.PCUT === 1);
+
+  const slipLight = document.getElementById('light-slip');
+  slipLight.classList.toggle('on-green', d.SLIP === 0);
+  slipLight.classList.toggle('on-red', d.SLIP === 1);
+  document.getElementById('label-slip').textContent = d.SLIP === 0 ? 'TRUSTWORTHY' : 'UNRELIABLE';
+
+  chartData.push({ t: Date.now(), v: d.WSPD });
+}
+
+connect();
+
+function loop() {
+  drawChart();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+
+</body>
+</html>

@@ -16,3 +16,4 @@ Drivers/CMSIS/DAP/
 Drivers/CMSIS/RTOS/
 Drivers/CMSIS/RTOS2/
 Drivers/CMSIS/Documentation/
+tools/dashboard/.venv/

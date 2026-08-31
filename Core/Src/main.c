@@ -183,7 +183,7 @@ int main(void)
 
   /* USER CODE BEGIN 2 */
 
-  char boot_msg[] = "Board booted, UART alive\r\n";
+  char boot_msg[] = "Board booted, UART alive - FALLING EDGE TEST v2\r\n";
   HAL_UART_Transmit(&huart2, (uint8_t*)boot_msg, sizeof(boot_msg) - 1, 100);
 
   uint8_t who_am_i_result;
@@ -260,8 +260,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    char loop_msg[] = "Loop iteration start\r\n";
-    HAL_UART_Transmit(&huart2, (uint8_t*)loop_msg, sizeof(loop_msg) - 1, 100);
 
     HAL_ADC_Start(&hadc1);
 
@@ -611,7 +609,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PC1 */
   GPIO_InitStruct.Pin = GPIO_PIN_1;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
@@ -635,6 +633,8 @@ static void MX_GPIO_Init(void)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     pulse_counter++;
+    char msg[] = "PULSE DETECTED\r\n";
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, sizeof(msg) - 1, 100);
 }
 
 /* USER CODE END 4 */
