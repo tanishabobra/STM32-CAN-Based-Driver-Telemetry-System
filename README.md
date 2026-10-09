@@ -1,10 +1,10 @@
 # STM32 CAN-Based Driver Telemetry System
 
-Electric vehicles depend on distributed embedded systems: independent nodes reading sensors, applying safety-critical logic in hard real time, and communicating state over a shared bus with no single point of failure. This project implements a driver input and telemetry node from first principles on an STM32 microcontroller, targeting realistic accelerator/brake safety and sensor-timing requirements, and evaluates each subsystem against measured hardware behavior rather than assumed correctness.
+Electric vehicles depend on distributed embedded systems: independent nodes reading sensors, applying safety-critical logic in hard real time, and communicating state over a shared bus with no single point of failure. This project implements a driver input and telemetry node from first principles on an STM32 microcontroller, targeting realistic accelerator/brake safety and sensor-timing requirements, and evaluates each subsystem against hardware behavior where it could be tested, documenting what remains unverified.
 
 ## Problem Statement
 
-An electric vehicle's accelerator pedal position sensor (APPS) and brake system need strict plausibility checking: if brake and throttle are applied simultaneously past a threshold, or if two redundant APPS signals disagree for longer than a bounded time window, motor power must be cut. Getting this wrong either creates a real safety hazard (power that doesn't cut) or a car that shuts off under normal driving (false positives from noisy analog signals). Beyond the safety interlock, a car benefits from low-cost plausibility context, using additional sensors to flag when a given reading (like wheel speed) is likely unreliable, for example during hard cornering, and from getting that data off the ECU and onto a shared bus where other nodes and a dashboard can use it. This project builds and verifies each of those pieces individually, on real hardware, rather than only in simulation.
+An electric vehicle's accelerator pedal position sensor (APPS) and brake system need strict plausibility checking: if brake and throttle are applied simultaneously past a threshold, or if two redundant APPS signals disagree for longer than a bounded time window, motor power must be cut. Getting this wrong either creates a real safety hazard (power that doesn't cut) or a car that shuts off under normal driving (false positives from noisy analog signals). Beyond the safety interlock, a car benefits from low-cost plausibility context, using additional sensors to flag when a given reading (like wheel speed) is likely unreliable, for example during hard cornering, and from getting that data off the ECU and onto a shared bus where other nodes and a dashboard can use it. This project builds each of those pieces individually and verifies them on real hardware where possible, rather than only in simulation.
 
 ## Method
 
@@ -44,7 +44,7 @@ A separate intermittent fault with two modules on the shared SPI bus was traced 
 
 ## Conclusion
 
-Each subsystem was built and evaluated against measured hardware behavior rather than assumed correctness. The brake-throttle interlock and gyro yaw-rate sensing were verified directly on hardware, and the CAN driver was verified on hardware in loopback mode. The wheel-speed pipeline, interrupt handling, rate calculation, and CAN packing, was validated end to end using a push button as a substitute pulse source after the intended Hall-effect sensor was found defective, with the substitution and its reasoning documented above.
+Each subsystem was built and evaluated against hardware behavior where it could be tested. The brake-throttle interlock and gyro yaw-rate sensing were verified directly on hardware, and the CAN driver was verified on hardware in loopback mode. The wheel-speed pipeline (interrupt handling, rate calculation, and CAN packing) was validated end to end using a push button as a substitute pulse source after the intended Hall-effect sensor was found defective, with the substitution and its reasoning documented above.
 
 ## Architecture
 
